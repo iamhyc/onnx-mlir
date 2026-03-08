@@ -140,7 +140,7 @@ Value reverseAllElements(
   ShapedType inputType = mlir::cast<ShapedType>(input.getType());
   ArrayRef<int64_t> inputShape = inputType.getShape();
   SmallVector<int64_t, 4> sLens;
-  assert((dimension == 0 or dimension == 1) &&
+  assert((dimension == 0 || dimension == 1) &&
          "Reversed dimension need to be 0 or 1.");
   // Create `sequence_lengths`, `batch_axis` and `time_axis` to reverse all
   // elements. When reversing the first dim of input(d0 x d1), set `batch_axis`

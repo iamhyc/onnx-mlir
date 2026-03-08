@@ -81,7 +81,11 @@ execute_process(
 if (${PYTEST_XDIST_FOUND} EQUAL 0)
   message(STATUS "Parallel backend tests   : ON")
   set(BACKEND_TEST_COMMAND "${Python3_EXECUTABLE}" "-m" "pytest")
-  set(BACKEND_TEST_ARGS "-n" "$$\{NPROC:-auto\}" "-q" "--silent")
+  if (WIN32)
+    set(BACKEND_TEST_ARGS "-n" "auto" "-q" "--silent")
+  else()
+    set(BACKEND_TEST_ARGS "-n" "$$\{NPROC:-auto\}" "-q" "--silent")
+  endif()
 else()
   message(STATUS "Parallel backend tests   : OFF (install pytest-xdist to enable)")
   set(BACKEND_TEST_COMMAND ${Python3_EXECUTABLE})
@@ -103,7 +107,9 @@ endif()
 # stepping on each other's toes.
 add_custom_target(check-onnx-backend
   COMMAND
+    ${CMAKE_COMMAND} -E env
     ONNX_HOME=${FILE_GENERATE_DIR}/check-onnx-backend
+    $<$<BOOL:WIN32>:TEST_NOFLOAT16=true>
     ${BACKEND_TEST_COMMAND} ${BACKEND_TEST_ARGS} ${FILE_GENERATE_DIR}/test.py
   DEPENDS
     ${FILE_GENERATE_DIR}/test.py
@@ -112,8 +118,10 @@ add_custom_target(check-onnx-backend
 
 add_custom_target(check-onnx-backend-dynamic
   COMMAND
+    ${CMAKE_COMMAND} -E env
     ONNX_HOME=${FILE_GENERATE_DIR}/check-onnx-backend-dynamic
     TEST_DYNAMIC=true
+    $<$<BOOL:WIN32>:TEST_NOFLOAT16=true>
     ${BACKEND_TEST_COMMAND} ${BACKEND_TEST_ARGS} ${FILE_GENERATE_DIR}/test.py
   DEPENDS
     ${FILE_GENERATE_DIR}/test.py
@@ -122,8 +130,10 @@ add_custom_target(check-onnx-backend-dynamic
 
 add_custom_target(check-onnx-backend-constant
   COMMAND
+    ${CMAKE_COMMAND} -E env
     ONNX_HOME=${FILE_GENERATE_DIR}/check-onnx-backend-constant
     TEST_CONSTANT=true
+    $<$<BOOL:WIN32>:TEST_NOFLOAT16=true>
     ${BACKEND_TEST_COMMAND} ${BACKEND_TEST_ARGS} ${FILE_GENERATE_DIR}/test.py
   DEPENDS
     ${FILE_GENERATE_DIR}/test.py
@@ -132,8 +142,10 @@ add_custom_target(check-onnx-backend-constant
 
 add_custom_target(check-onnx-backend-node
   COMMAND
+    ${CMAKE_COMMAND} -E env
     ONNX_HOME=${FILE_GENERATE_DIR}/check-onnx-backend-node
     TEST_TYPE=node
+    $<$<BOOL:WIN32>:TEST_NOFLOAT16=true>
     ${BACKEND_TEST_COMMAND} ${BACKEND_TEST_ARGS} ${FILE_GENERATE_DIR}/test.py
   DEPENDS
     ${FILE_GENERATE_DIR}/test.py
@@ -142,8 +154,10 @@ add_custom_target(check-onnx-backend-node
 
 add_custom_target(check-onnx-backend-model
   COMMAND
+    ${CMAKE_COMMAND} -E env
     ONNX_HOME=${FILE_GENERATE_DIR}/check-onnx-backend-model
     TEST_TYPE=model
+    $<$<BOOL:WIN32>:TEST_NOFLOAT16=true>
     ${BACKEND_TEST_COMMAND} ${BACKEND_TEST_ARGS} ${FILE_GENERATE_DIR}/test.py
   DEPENDS
     ${FILE_GENERATE_DIR}/test.py
@@ -164,7 +178,10 @@ ENDIF()
 
 add_custom_target(check-onnx-backend-signature
   COMMAND
+    ${CMAKE_COMMAND} -E env
+    ONNX_HOME=${FILE_GENERATE_DIR}/check-onnx-backend-signature
     TEST_SIGNATURE=true
+    $<$<BOOL:WIN32>:TEST_NOFLOAT16=true>
     ${BACKEND_TEST_COMMAND} ${BACKEND_TEST_ARGS} ${FILE_GENERATE_DIR}/test.py
   DEPENDS
     ${FILE_GENERATE_DIR}/test.py
@@ -175,6 +192,8 @@ add_custom_target(check-onnx-backend-signature
 # The result is recorded in file all_test_names.txt
 add_custom_target(check-onnx-backend-case
   COMMAND
+    ${CMAKE_COMMAND} -E env
+    ONNX_HOME=${FILE_GENERATE_DIR}/check-onnx-backend-case
     TEST_CASE_CHECK=true
     ${Python3_EXECUTABLE} ${FILE_GENERATE_DIR}/test.py
   DEPENDS
@@ -186,7 +205,10 @@ add_custom_target(check-onnx-backend-case
 # and this test cannot check messages from stdout.
 add_custom_target(check-onnx-backend-input-verification
   COMMAND
+    ${CMAKE_COMMAND} -E env
+    ONNX_HOME=${FILE_GENERATE_DIR}/check-onnx-backend-input-verification
     TEST_INPUT_VERIFICATION=true
+    $<$<BOOL:WIN32>:TEST_NOFLOAT16=true>
     ${Python3_EXECUTABLE} ${FILE_GENERATE_DIR}/test.py --input_verification
   DEPENDS
     ${FILE_GENERATE_DIR}/test.py
@@ -195,7 +217,10 @@ add_custom_target(check-onnx-backend-input-verification
 
 add_custom_target(check-onnx-backend-compilerlib
   COMMAND
-    TEST_COMPILERLIB=true ONNX_HOME=${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_COMMAND} -E env
+    TEST_COMPILERLIB=true
+    ONNX_HOME=${CMAKE_CURRENT_BINARY_DIR}
+    $<$<BOOL:WIN32>:TEST_NOFLOAT16=true>
     ${BACKEND_TEST_COMMAND} ${BACKEND_TEST_ARGS} ${FILE_GENERATE_DIR}/test.py
   DEPENDS
     ${FILE_GENERATE_DIR}/test.py

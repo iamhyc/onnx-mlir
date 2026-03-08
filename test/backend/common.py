@@ -78,7 +78,10 @@ def check_instruction(test_name, exec_name):
 
 
 def compile_model(model, emit):
-    suffix = {"lib": ".so", "obj": ".o", "jni": ".jar"}
+    if os.name == "nt":
+        suffix = {"lib": ".dll", "obj": ".obj", "jni": ".jar"}
+    else:
+        suffix = {"lib": ".so", "obj": ".o", "jni": ".jar"}
     target = {"lib": "--EmitLib", "obj": "--EmitObj", "jni": "--EmitJNI"}
     name = model.graph.name
 
@@ -139,9 +142,12 @@ def compile_model(model, emit):
             "--dimParams=" + variables.test_to_enable_dimparams_dict[test_name_cpu]
         )
 
+    cli_model_name = model_name.replace("\\", "/") if os.name == "nt" else model_name
+    cli_exec_base = exec_base.replace("\\", "/") if os.name == "nt" else exec_base
+
     command_list.append(target[emit])
-    command_list.append(model_name)
-    command_list.append("-o=" + exec_base)
+    command_list.append(cli_model_name)
+    command_list.append("-o=" + cli_exec_base)
 
     # Additional args passed in by TEST_COMPILE_ARGS
     # Args are separated by ';'

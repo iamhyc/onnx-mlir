@@ -58,6 +58,14 @@ set(ONNX_MLIR_TEST_DEPENDS
   binary-decoder
   )
 
+if (WIN32)
+  add_library(onnxmlir_win_shim STATIC EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/windows_errno_shim.c)
+  set_target_properties(onnxmlir_win_shim PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test/mlir/lib")
+  list(APPEND ONNX_MLIR_TEST_DEPENDS onnxmlir_win_shim)
+endif()
+
 add_lit_testsuite(check-onnx-lit
                   "Running the ONNX-MLIR regression tests"
                   ${CMAKE_CURRENT_BINARY_DIR}

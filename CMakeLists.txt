@@ -71,6 +71,15 @@ set(ONNX_MLIR_LIBRARY_PATH ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
 set(ONNX_MLIR_RUNTIME_PATH ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 set(ONNX_MLIR_INCLUDE_PATH ${CMAKE_INCLUDE_OUTPUT_DIRECTORY})
 
+if (WIN32)
+  # Provide a POSIX-compat strings.h shim for sources that include it.
+  set(ONNX_MLIR_WIN_COMPAT_INCLUDE_DIR ${CMAKE_BINARY_DIR}/compat_include)
+  file(MAKE_DIRECTORY ${ONNX_MLIR_WIN_COMPAT_INCLUDE_DIR})
+  file(WRITE ${ONNX_MLIR_WIN_COMPAT_INCLUDE_DIR}/strings.h
+"#pragma once\n#include <string.h>\n#ifndef strcasecmp\n#define strcasecmp _stricmp\n#endif\n#ifndef strncasecmp\n#define strncasecmp _strnicmp\n#endif\n")
+  include_directories(${ONNX_MLIR_WIN_COMPAT_INCLUDE_DIR})
+endif()
+
 set(ONNX_MLIR_VENDOR ${PACKAGE_VENDOR} CACHE STRING
   "Vendor-specific text for showing with version information.")
 
@@ -151,6 +160,14 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   # Use the new MSVC preprocessor to improve standard conformance.
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /Zc:preprocessor")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zc:preprocessor")
+
+  # Keep Windows builds compatible with existing code that is rejected by
+  # strict conformance mode under newer MSVC toolsets.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /permissive")
+
+  # Expose math constants such as M_PI on MSVC.
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /D_USE_MATH_DEFINES")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /D_USE_MATH_DEFINES")
 
   # Disable warning for non-standard usages of std::complex template which was
   # introduced in MSVC 14.34.

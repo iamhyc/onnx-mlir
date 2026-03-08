@@ -26,18 +26,44 @@ config.test_exec_root = os.path.join(config.onnx_mlir_obj_root, "test", "mlir")
 
 llvm_config.use_default_substitutions()
 
+if platform.system() == "Windows":
+    config.substitutions.append(("%onnx_mlir_shared_lib_ext", ".dll"))
+    config.substitutions.append(("%onnx_mlir_obj_ext", ".obj"))
+elif platform.system() == "Darwin":
+    config.substitutions.append(("%onnx_mlir_shared_lib_ext", ".dylib"))
+    config.substitutions.append(("%onnx_mlir_obj_ext", ".o"))
+else:
+    config.substitutions.append(("%onnx_mlir_shared_lib_ext", ".so"))
+    config.substitutions.append(("%onnx_mlir_obj_ext", ".o"))
+
 # Tweak the PATH to include the tools dir.
 llvm_config.with_environment("PATH", config.llvm_tools_dir, append_path=True)
 
 tool_dirs = [config.onnx_mlir_tools_dir, config.mlir_tools_dir, config.llvm_tools_dir]
 
-tools = [
-    "onnx-mlir",
-    "onnx-mlir-opt",
-    "mlir-opt",
-    "mlir-translate",
-    "binary-decoder",
-]
+if platform.system() == "Windows":
+    shim_dir = os.path.join(config.onnx_mlir_obj_root, "test", "mlir", "lib")
+    shim_dir = shim_dir.replace("\\", "/")
+    tools = [
+        ToolSubst(
+            "onnx-mlir",
+            command=FindTool("onnx-mlir"),
+            extra_args=[f"-L{shim_dir}", "-lonnxmlir_win_shim"],
+            unresolved="fatal",
+        ),
+        "onnx-mlir-opt",
+        "mlir-opt",
+        "mlir-translate",
+        "binary-decoder",
+    ]
+else:
+    tools = [
+        "onnx-mlir",
+        "onnx-mlir-opt",
+        "mlir-opt",
+        "mlir-translate",
+        "binary-decoder",
+    ]
 
 llvm_config.add_tool_substitutions(tools, tool_dirs)
 

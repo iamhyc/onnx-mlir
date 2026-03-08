@@ -291,6 +291,12 @@ GenOpMix getGenOpMix(mlir::Type elementType, mlir::Operation *op) {
   return {{GenericOps::ScalarOnlyGop, 1}};
 }
 
+// Declared here so uses in other translation units bind to the specialization
+// defined in Elementwise.cpp instead of instantiating the primary template.
+template <>
+GenOpMix getGenOpMix<mlir::ONNXRoundOp>(
+    mlir::Type elementType, mlir::Operation *op);
+
 //===----------------------------------------------------------------------===//
 // Type conversion from Onnx types to Krnl types:
 //   - from Tensor type to the Standard dialect MemRef type

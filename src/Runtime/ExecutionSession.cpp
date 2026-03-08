@@ -55,7 +55,11 @@ void ExecutionSession::loadModel(
     std::string fname = llvm::sys::path::filename(sharedLibPath).str();
     llvm::SmallString<256> fnameWithoutExt(fname);
     llvm::sys::path::replace_extension(fnameWithoutExt, "");
-    tag = fnameWithoutExt.lower();
+  std::string fnameWithoutExtStr = fnameWithoutExt.str().str();
+  std::transform(fnameWithoutExtStr.begin(), fnameWithoutExtStr.end(),
+    fnameWithoutExtStr.begin(),
+    [](unsigned char c) { return std::tolower(c); });
+  tag = fnameWithoutExtStr;
 #else
     std::string fnameWithoutExt = std::filesystem::path(sharedLibPath)
                                       .filename()

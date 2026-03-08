@@ -37,8 +37,16 @@ enum OM_DATA_TYPE {
 typedef enum OM_DATA_TYPE OM_DATA_TYPE;
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern const int OM_DATA_TYPE_SIZE[];
 extern const char *OM_DATA_TYPE_NAME[];
+
+#ifdef __cplusplus
+}
+#endif
 
 #ifdef __cplusplus
 // Note by design const map has no [] operator since [] creates a default

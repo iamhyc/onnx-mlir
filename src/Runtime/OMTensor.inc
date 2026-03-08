@@ -35,6 +35,7 @@
 #endif
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -47,7 +48,28 @@
 
 #include "src/Support/SmallFPConversion.h"
 
-#if defined(__APPLE__) || defined(__MVS__)
+#if defined(_WIN32)
+// __errno_location() is called from krnl::emitErrNo() to set errno in generated
+// LLVM IR. Windows exposes _errno() instead, so provide a compatible wrapper.
+int *__errno_location(void) { return _errno(); }
+
+// Some generated code expects POSIX isnanf symbol.
+int isnanf(float x) { return _isnan((double)x); }
+
+// Some generated code may reference printf directly when lowering diagnostics.
+// Provide a fallback and map unresolved printf references to it at link time.
+int om_printf_fallback(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  int rc = vfprintf(stdout, format, args);
+  va_end(args);
+  return rc;
+}
+
+#if defined(_MSC_VER)
+#pragma comment(linker, "/alternatename:printf=om_printf_fallback")
+#endif
+#elif defined(__APPLE__) || defined(__MVS__)
 // __errno_location() is called from krnl::emitErrNo() to set errno in
 // generated llvm IR, but it somehow doesn't come out of the box on MacOS or
 // MVS.

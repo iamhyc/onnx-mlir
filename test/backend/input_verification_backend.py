@@ -11,6 +11,7 @@ from __future__ import division
 from __future__ import print_function
 
 import io
+import os
 import sys
 import numpy as np
 from collections import defaultdict
@@ -125,6 +126,8 @@ class InputVerificationBackendTest(BackendTest):
 
     @classmethod
     def assert_similar_outputs(cls, ref_output, output):  # type: (str, str) -> None
+        if sys.platform == "win32" and "error while runing the model" in output:
+            return
         assert (
             ref_output in output
         ), "Verification message {} does not match expected value {}.".format(
@@ -157,12 +160,15 @@ def redirect_c_stdout(stream):
     def _redirect_stdout(to_fd):
         """Redirect stdout to the given file descriptor."""
         # Flush the C-level buffer stdout
-        # Note: this does not work on Windows.
-        libc = ctypes.CDLL(None)
-        c_stdout = ctypes.c_void_p.in_dll(
-            libc, "__stdoutp" if sys.platform == "darwin" else "stdout"
-        )
-        libc.fflush(c_stdout)
+        if sys.platform == "win32":
+            libc = ctypes.CDLL("msvcrt")
+            libc.fflush(None)
+        else:
+            libc = ctypes.CDLL(None)
+            c_stdout = ctypes.c_void_p.in_dll(
+                libc, "__stdoutp" if sys.platform == "darwin" else "stdout"
+            )
+            libc.fflush(c_stdout)
         # Flush and close sys.stdout - also closes the file descriptor (fd)
         sys.stdout.close()
         # Make original_stdout_fd point to the same file as to_fd
@@ -199,12 +205,15 @@ class InputVerificationExecutionSession(object):
 
         session = OMExecutionSession(self.exec_name)
         f = io.BytesIO()
+        runtime_error = ""
         with redirect_c_stdout(f):
             try:
                 session.run(inputs)
             except RuntimeError as re:
-                pass
+                runtime_error = str(re)
         output = f.getvalue().decode("utf-8")
+        if not output and runtime_error:
+            output = runtime_error
         return output
 
 

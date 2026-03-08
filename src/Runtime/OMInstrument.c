@@ -136,14 +136,14 @@ static inline void GetTime(LARGE_INTEGER *newTime) {
 static inline void PrintTime(LARGE_INTEGER *newTime, int isBefore) {
   LONGLONG resultSeconds1, resultMicroseconds1;
   LONGLONG resultSeconds2, resultMicroseconds2;
-  WinTimerSub(newTime, globalTime, &resultSeconds1, &resultMicroseconds1);
-  WinTimerSub(newTime, initTime, &resultSeconds2, &resultMicroseconds2);
+  WinTimerSub(*newTime, globalTime, &resultSeconds1, &resultMicroseconds1);
+  WinTimerSub(*newTime, initTime, &resultSeconds2, &resultMicroseconds2);
   // Print header and data for time.
   fprintf(fout, "==PERF-REPORT==, %s, %s, %s, %lld.%06lld, %lld.%06lld\n",
       instrumentReportOpName, instrumentReportNodeName,
       (isBefore ? "before" : "after"), resultSeconds1, resultMicroseconds1,
       resultSeconds2, resultMicroseconds2);
-  globalTime = newTime;
+  globalTime = *newTime;
 }
 #else
 static inline void GetTime(struct timeval *newTimeValue) {
