@@ -14,6 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
@@ -69,13 +70,17 @@ struct ONNXMatMulOpLoweringToLinalg : public OpRewritePattern<ONNXMatMulOp> {
       return rewriter.notifyMatchFailure(
           matMulOp, "expected ranked output tensor type");
 
-    // For now, use static shapes from the output type
-    // TODO: Handle dynamic shapes properly with ShapeHelper
     ArrayRef<int64_t> outputShape = outputTensorType.getShape();
+    SmallVector<Value, 2> dynamicOutputDims;
+
+    if (ShapedType::isDynamic(outputShape[0]))
+      dynamicOutputDims.emplace_back(tensor::DimOp::create(rewriter, loc, A, 0));
+    if (ShapedType::isDynamic(outputShape[1]))
+      dynamicOutputDims.emplace_back(tensor::DimOp::create(rewriter, loc, B, 1));
 
     // Create output tensor with tensor.empty
-    Value emptyTensor = tensor::EmptyOp::create(
-        rewriter, loc, outputShape, outputTensorType.getElementType());
+    Value emptyTensor =
+      tensor::EmptyOp::create(rewriter, loc, outputTensorType, dynamicOutputDims);
 
     // Create zero constant for initialization
     Value zero = arith::ConstantOp::create(rewriter, loc,

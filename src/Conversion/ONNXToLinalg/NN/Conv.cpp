@@ -31,6 +31,8 @@
 #include "src/Dialect/ONNX/ONNXOps.hpp"
 #include "src/Dialect/ONNX/ONNXOps/OpHelper.hpp"
 
+#include <cassert>
+
 using namespace mlir;
 
 namespace onnx_mlir {
@@ -143,13 +145,52 @@ struct ONNXConvOpLoweringToLinalg : public OpRewritePattern<ONNXConvOp> {
           convOp, "expected ranked output tensor type");
     }
 
-    // For now, use static shapes from the output type
-    // TODO: Handle dynamic shapes properly with ShapeHelper
     ArrayRef<int64_t> outputShape = outputTensorType.getShape();
+    SmallVector<Value, 4> dynamicOutputDims;
+
+    auto appendDynamicOutputDim = [&](int64_t axis) {
+      if (!ShapedType::isDynamic(outputShape[axis]))
+        return;
+
+      Value axisVal = nullptr;
+      switch (axis) {
+      case 0:
+        axisVal = tensor::DimOp::create(rewriter, loc, X, 0);
+        break;
+      case 1:
+        axisVal = tensor::DimOp::create(rewriter, loc, W, 0);
+        break;
+      case 2:
+      case 3: {
+        const int64_t spatialAxis = axis;
+        const int64_t kernelAxis = axis;
+        const int64_t stride = strides[axis - 2];
+
+        Value inputSpatialDim =
+            tensor::DimOp::create(rewriter, loc, X, spatialAxis);
+        Value kernelSpatialDim =
+            tensor::DimOp::create(rewriter, loc, W, kernelAxis);
+        Value strideVal = arith::ConstantIndexOp::create(rewriter, loc, stride);
+        Value oneVal = arith::ConstantIndexOp::create(rewriter, loc, 1);
+        Value spatialSpan =
+            arith::SubIOp::create(rewriter, loc, inputSpatialDim, kernelSpatialDim);
+        Value strided =
+            arith::DivSIOp::create(rewriter, loc, spatialSpan, strideVal);
+        axisVal = arith::AddIOp::create(rewriter, loc, strided, oneVal);
+      } break;
+      default:
+        assert(false && "unexpected Conv output axis");
+      }
+
+      dynamicOutputDims.emplace_back(axisVal);
+    };
+
+    for (int64_t axis = 0; axis < outputTensorType.getRank(); ++axis)
+      appendDynamicOutputDim(axis);
 
     // Create initialization tensor
-    Value emptyTensor = tensor::EmptyOp::create(
-        rewriter, loc, outputShape, outputTensorType.getElementType());
+    Value emptyTensor =
+      tensor::EmptyOp::create(rewriter, loc, outputTensorType, dynamicOutputDims);
 
     // Create zero constant for initialization
     Value zero = arith::ConstantOp::create(rewriter, loc,

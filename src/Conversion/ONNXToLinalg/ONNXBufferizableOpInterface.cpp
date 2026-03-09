@@ -88,5 +88,9 @@ void onnx_mlir::registerONNXBufferizableOpInterfaces(
     // Add operation (commonly used with MatMul in examples)
     mlir::ONNXAddOp::attachInterface<
         ONNXOpBufferizableInterface<mlir::ONNXAddOp>>(*ctx);
+
+    // Conv operation may remain as ONNX when selective Linalg lowering is used
+    mlir::ONNXConvOp::attachInterface<
+      ONNXOpBufferizableInterface<mlir::ONNXConvOp>>(*ctx);
   });
 }

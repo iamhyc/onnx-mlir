@@ -161,6 +161,35 @@ private:
     const auto &apiRegistry =
         RuntimeAPIRegistry(module, rewriter, *llvmTypeConverter);
 
+    auto handleDenseAttrAsOMTensor = [&](DenseElementsAttr denseAttr) {
+      // Use krnl.global to materialize tensor attributes as OMTensor values.
+      auto tensorTy = mlir::cast<TensorType>(denseAttr.getType());
+      auto memRefTy =
+        MemRefType::get(tensorTy.getShape(), tensorTy.getElementType());
+      Value constantGlobal =
+        create.krnl.constant(memRefTy, "constant_", denseAttr);
+      Value convertedConstantGlobal =
+        UnrealizedConversionCastOp::create(rewriter, loc,
+          llvmTypeConverter->convertType(memRefTy), constantGlobal)
+          .getResult(0);
+
+      auto int64Ty = IntegerType::get(context, 64);
+      auto memRefRank = memRefTy.getRank();
+      auto memRefRankVal =
+        create.llvm.constant(int64Ty, static_cast<int64_t>(memRefRank));
+      Value omTensor = RuntimeAPI::callApi(rewriter, loc, apiRegistry,
+        RuntimeAPI::API::CREATE_OMTENSOR, {memRefRankVal});
+
+      Type llvmElemTy =
+        llvmTypeConverter->convertType(memRefTy.getElementType());
+      krnl::fillOMTensorWithMemRef(convertedConstantGlobal, llvmElemTy,
+        omTensor, false /*outOwning*/, rewriter, loc, apiRegistry, module);
+      auto int8Ty = IntegerType::get(context, 8);
+      auto opaquePtrTy = getPointerType(context, int8Ty);
+      parameterTypeList.emplace_back(opaquePtrTy);
+      parameterList.emplace_back(omTensor);
+    };
+
     TypeSwitch<Attribute>(attribute)
         .Case<StringAttr>([&](StringAttr strAttr) {
           StringRef attrValue = strAttr.getValue();
@@ -187,38 +216,47 @@ private:
           parameterList.emplace_back(cst);
         })
         .Case<DenseElementsAttr>([&](DenseElementsAttr denseAttr) {
-          // Use krnl.global to handle it
-          // Since the attribute is still in tensor type, the code has to cross
-          // onnx to krnl, and krnl to llvm.
-          // In future, the attributes should be converted in krnl.call builder.
-          // This code passed onnx-mlir-opt --convert-krnl-to-llvm test case,
-          // but failed in onnx-milr for the tensor type for the attribute
-          auto tensorTy = mlir::cast<TensorType>(denseAttr.getType());
-          auto memRefTy =
-              MemRefType::get(tensorTy.getShape(), tensorTy.getElementType());
-          Value constantGlobal =
-              create.krnl.constant(memRefTy, "constant_", denseAttr);
-          Value convertedConstantGlobal =
-              UnrealizedConversionCastOp::create(rewriter, loc,
-                  llvmTypeConverter->convertType(memRefTy), constantGlobal)
-                  .getResult(0);
-
-          auto int64Ty = IntegerType::get(context, 64);
-          auto memRefRank = memRefTy.getRank();
-          auto memRefRankVal =
-              create.llvm.constant(int64Ty, static_cast<int64_t>(memRefRank));
-          Value omTensor = RuntimeAPI::callApi(rewriter, loc, apiRegistry,
-              RuntimeAPI::API::CREATE_OMTENSOR, {memRefRankVal});
-
-          Type llvmElemTy =
-              llvmTypeConverter->convertType(memRefTy.getElementType());
-          krnl::fillOMTensorWithMemRef(convertedConstantGlobal, llvmElemTy,
-              omTensor, false /*outOwning*/, rewriter, loc, apiRegistry,
-              module);
-          auto int8Ty = IntegerType::get(context, 8);
-          auto opaquePtrTy = getPointerType(context, int8Ty);
-          parameterTypeList.emplace_back(opaquePtrTy);
-          parameterList.emplace_back(omTensor);
+          handleDenseAttrAsOMTensor(denseAttr);
+        })
+        .Case<ArrayAttr>([&](ArrayAttr arrayAttr) {
+          if (arrayAttr.empty()) {
+            llvm_unreachable("ArrayAttr must not be empty");
+          }
+          
+          // Check the first element to determine the array element type
+          Attribute firstElem = arrayAttr[0];
+          if (auto intAttr = dyn_cast<IntegerAttr>(firstElem)) {
+            // Integer array: convert to tensor<Nxi64>
+            SmallVector<int64_t, 8> intVals;
+            intVals.reserve(arrayAttr.size());
+            for (Attribute element : arrayAttr) {
+              auto elemInt = dyn_cast<IntegerAttr>(element);
+              if (!elemInt)
+                llvm_unreachable("Mixed element types in ArrayAttr is not supported");
+              intVals.emplace_back(elemInt.getInt());
+            }
+            auto denseTy = RankedTensorType::get(
+                {static_cast<int64_t>(intVals.size())}, rewriter.getI64Type());
+            auto denseAttr = DenseIntElementsAttr::get(denseTy, intVals);
+            handleDenseAttrAsOMTensor(denseAttr);
+          } else if (auto floatAttr = dyn_cast<FloatAttr>(firstElem)) {
+            // Float array: convert to tensor<Nxf64>
+            SmallVector<double, 8> floatVals;
+            floatVals.reserve(arrayAttr.size());
+            for (Attribute element : arrayAttr) {
+              auto elemFloat = dyn_cast<FloatAttr>(element);
+              if (!elemFloat)
+                llvm_unreachable("Mixed element types in ArrayAttr is not supported");
+              floatVals.emplace_back(elemFloat.getValueAsDouble());
+            }
+            auto f64Ty = rewriter.getF64Type();
+            auto denseTy = RankedTensorType::get(
+                {static_cast<int64_t>(floatVals.size())}, f64Ty);
+            auto denseAttr = DenseFPElementsAttr::get(denseTy, floatVals);
+            handleDenseAttrAsOMTensor(denseAttr);
+          } else {
+            llvm_unreachable("Unsupported ArrayAttr element type for krnl.call");
+          }
         })
         .Default([&](Attribute attr) {
           llvm_unreachable("This type of Attribute used by krnl.call is not "

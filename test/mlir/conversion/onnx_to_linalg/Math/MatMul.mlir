@@ -102,3 +102,24 @@ func.func @test_matmul_2d_1d_not_lowered(%arg0: tensor<2x3xf32>,
   // CHECK: "onnx.MatMul"(%arg0, %arg1) : (tensor<2x3xf32>, tensor<3xf32>)
   // -> tensor<2xf32>
 }
+
+// -----
+
+// Test MatMul 2D x 2D with dynamic output dimensions.
+func.func @test_matmul_dynamic(%arg0: tensor<?x3xf32>, %arg1: tensor<3x?xf32>)
+    -> tensor<?x?xf32> {
+  %0 = "onnx.MatMul"(%arg0, %arg1) : (tensor<?x3xf32>, tensor<3x?xf32>)
+      -> tensor<?x?xf32>
+  return %0 : tensor<?x?xf32>
+
+  // CHECK-LABEL: test_matmul_dynamic
+  // CHECK-DAG: [[C0:%.+]] = arith.constant 0 : index
+  // CHECK-DAG: [[C1:%.+]] = arith.constant 1 : index
+  // CHECK-DAG: [[D0:%.+]] = tensor.dim %arg0, [[C0]] : tensor<?x3xf32>
+  // CHECK-DAG: [[D1:%.+]] = tensor.dim %arg1, [[C1]] : tensor<3x?xf32>
+  // CHECK-DAG: [[ZERO:%.+]] = arith.constant 0.000000e+00 : f32
+  // CHECK-DAG: [[EMPTY:%.+]] = tensor.empty([[D0]], [[D1]]) : tensor<?x?xf32>
+  // CHECK: [[FILLED:%.+]] = linalg.fill ins([[ZERO]] : f32) outs([[EMPTY]]
+  // CHECK: [[RESULT:%.+]] = linalg.matmul ins(%arg0, %arg1 : tensor<?x3xf32>, tensor<3x?xf32>) outs([[FILLED]] : tensor<?x?xf32>) -> tensor<?x?xf32>
+  // CHECK: return [[RESULT]] : tensor<?x?xf32>
+}
