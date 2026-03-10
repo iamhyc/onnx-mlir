@@ -22,6 +22,7 @@
 #include "src/Dialect/ONNX/ONNXLayoutHelper.hpp"
 #include "src/Dialect/ONNX/ONNXOps.hpp"
 #include "src/Dialect/ONNX/ONNXOps/OpHelper.hpp"
+#include "src/Dialect/Mlir/VectorMachineSupport.hpp"
 #include "src/Dialect/ONNX/Transforms/ConvOpt.hpp"
 #include "src/Pass/Passes.hpp"
 #include "src/Support/TypeUtilities.hpp"
@@ -103,8 +104,170 @@ bool ExpressONNXConvOpAsMatmul(ONNXConvOp convOp, bool verbose = 0) {
 
 namespace {
 
-/// Include the patterns defined in the Declarative Rewrite framework.
-#include "src/Dialect/ONNX/Transforms/ONNXConvOpt.inc"
+int64_t getSimdLayoutFactorForType(Type elementType) {
+  if (!onnx_mlir::VectorMachineSupport::hasSimd())
+    return 4;
+  int64_t archVL =
+      onnx_mlir::VectorMachineSupport::getArchVectorLength(elementType);
+  // Keep factors to known/stable encodings for now.
+  if (archVL >= 8)
+    return 8;
+  return 4;
+}
+
+bool isLikelyProfitableForSimdLayout(
+    ONNXConvOp convOp, Type elementType, int64_t layoutFactor) {
+  auto xType = mlir::dyn_cast<RankedTensorType>(convOp.getX().getType());
+  auto wType = mlir::dyn_cast<RankedTensorType>(convOp.getW().getType());
+  auto yType = mlir::dyn_cast<RankedTensorType>(convOp.getY().getType());
+  if (!xType || !wType || !yType)
+    return false;
+
+  // Focus on convs with enough channel width to amortize layout transforms.
+  if (!xType.hasRank() || !wType.hasRank() || xType.getRank() < 2 ||
+      wType.getRank() < 2)
+    return false;
+  int64_t cin = xType.getShape()[1];
+  int64_t cout = wType.getShape()[0];
+  if (cin == ShapedType::kDynamic || cout == ShapedType::kDynamic)
+    return false;
+  if (cin < 2 * layoutFactor || cout < 2 * layoutFactor)
+    return false;
+
+  return true;
+}
+
+bool hasConvLayoutEncoding(Value v) {
+  return onnx_mlir::hasConvONNXTensorDataLayout(v.getType());
+}
+
+ONNXTensorEncodingAttr getConvEncodingOrNull(Value v) {
+  return onnx_mlir::getONNXTensorEncoding(v.getType());
+}
+
+bool canKeepOutputInSimdLayout(ONNXConvOp convOp) {
+  for (OpOperand &use : convOp.getY().getUses()) {
+    if (!mlir::isa<ONNXConvOp>(use.getOwner()))
+      return false;
+    // Keep layout only when feeding the X input of downstream conv.
+    if (use.getOperandNumber() != 0)
+      return false;
+  }
+  return true;
+}
+
+bool shouldAttemptSimdLayoutRewrite(ONNXConvOp convOp) {
+  if (!onnx_mlir::isRankedShapedType(convOp.getY().getType()))
+    return false;
+
+  auto yType = mlir::dyn_cast<RankedTensorType>(convOp.getY().getType());
+  if (!yType)
+    return false;
+
+  bool xHasLayout = hasConvLayoutEncoding(convOp.getX());
+  bool wHasLayout = hasConvLayoutEncoding(convOp.getW());
+  int64_t layoutFactor = 0;
+  if (xHasLayout) {
+    auto xEnc = getConvEncodingOrNull(convOp.getX());
+    if (!xEnc ||
+        xEnc.getDataLayout() != ONNXTensorEncodingAttr::DataLayout::NCHWxC)
+      return false;
+    layoutFactor = xEnc.getXFactor();
+  } else if (wHasLayout) {
+    auto wEnc = getConvEncodingOrNull(convOp.getW());
+    if (!wEnc ||
+        wEnc.getDataLayout() != ONNXTensorEncodingAttr::DataLayout::KCNMxCyK)
+      return false;
+    layoutFactor = wEnc.getXFactor();
+  } else {
+    layoutFactor = getSimdLayoutFactorForType(yType.getElementType());
+  }
+
+  if (!isLikelyProfitableForSimdLayout(
+          convOp, yType.getElementType(), layoutFactor))
+    return false;
+  if (!canKeepOutputInSimdLayout(convOp) && !xHasLayout && !wHasLayout)
+    return false;
+  return true;
+}
+
+struct ConvToSimdLayoutPattern : public ConversionPattern {
+  ConvToSimdLayoutPattern(MLIRContext *context)
+      : ConversionPattern(ONNXConvOp::getOperationName(), 1, context) {}
+
+  LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+      ConversionPatternRewriter &rewriter) const final {
+    ONNXConvOp convOp = llvm::cast<ONNXConvOp>(op);
+    Value x = convOp.getX();
+    Value w = convOp.getW();
+    Value b = convOp.getB();
+
+    if (!shouldAttemptSimdLayoutRewrite(convOp))
+      return failure();
+
+    auto yType = mlir::dyn_cast<RankedTensorType>(convOp.getY().getType());
+    if (!yType)
+      return failure();
+
+    bool xHasLayout = hasConvLayoutEncoding(x);
+    bool wHasLayout = hasConvLayoutEncoding(w);
+    int64_t layoutFactor = 0;
+
+    if (xHasLayout) {
+      auto xEnc = getConvEncodingOrNull(x);
+      if (!xEnc ||
+          xEnc.getDataLayout() != ONNXTensorEncodingAttr::DataLayout::NCHWxC)
+        return failure();
+      layoutFactor = xEnc.getXFactor();
+    } else if (wHasLayout) {
+      auto wEnc = getConvEncodingOrNull(w);
+      if (!wEnc ||
+          wEnc.getDataLayout() != ONNXTensorEncodingAttr::DataLayout::KCNMxCyK)
+        return failure();
+      layoutFactor = wEnc.getXFactor();
+    } else {
+      layoutFactor = getSimdLayoutFactorForType(yType.getElementType());
+    }
+
+    bool keepOutputInSimd = canKeepOutputInSimdLayout(convOp);
+
+    Attribute xLayoutAttr = ONNXTensorEncodingAttr::get(rewriter.getContext(),
+        ONNXTensorEncodingAttr::DataLayout::NCHWxC, layoutFactor, 0);
+    Attribute wLayoutAttr = ONNXTensorEncodingAttr::get(rewriter.getContext(),
+        ONNXTensorEncodingAttr::DataLayout::KCNMxCyK, layoutFactor,
+        layoutFactor);
+
+    Location loc = convOp.getLoc();
+    Value xOpt = x;
+    if (!xHasLayout)
+      xOpt =
+          rewriter.create<ONNXLayoutTransformOp>(loc, x, xLayoutAttr).getOutput();
+
+    Value wOpt = w;
+    if (!wHasLayout)
+      wOpt =
+          rewriter.create<ONNXLayoutTransformOp>(loc, w, wLayoutAttr).getOutput();
+
+    Type convResType = onnx_mlir::convertTensorTypeToTensorTypeWithEncoding(
+        convOp.getY().getType(), xLayoutAttr);
+    OperationState convState(loc, ONNXConvOp::getOperationName());
+    convState.addTypes(convResType);
+    convState.addOperands({xOpt, wOpt, b});
+    convState.addAttributes(convOp->getAttrs());
+    Operation *newConv = rewriter.create(convState);
+
+    if (keepOutputInSimd) {
+      rewriter.replaceOp(convOp, newConv->getResult(0));
+    } else {
+      Value res = rewriter
+                      .create<ONNXLayoutTransformOp>(
+                          loc, newConv->getResult(0), Attribute())
+                      .getOutput();
+      rewriter.replaceOp(convOp, res);
+    }
+    return success();
+  }
+};
 
 /*
    Pattern: when we have a convolution with filter of 1x1, stride 1, dilation of
@@ -217,7 +380,7 @@ void onnx_mlir::getConvOptONNXToONNXPatterns(
   // simd layout interact. Right now, only enable the one or the other. Will
   // need to refine this later.
   if (enableSimdDataLayoutOpt)
-    populateWithGenerated(patterns);
+    patterns.insert<ConvToSimdLayoutPattern>(patterns.getContext());
   else
     patterns.insert<Conv1x1ToMatmulPattern>(patterns.getContext());
 }
@@ -263,17 +426,15 @@ void ConvOptONNXToONNXPass::runOnOperation() {
   target.addDynamicallyLegalOp<ONNXConvOp>([&](ONNXConvOp op) {
     // Conv op can be converted to a matmul
     bool canBeAMatmul = onnx_mlir::ExpressONNXConvOpAsMatmul(op);
-    // Conv op has optimized layout
-    bool hasOptLayout =
-        onnx_mlir::hasConvONNXTensorDataLayout(op.getX().getType());
+    bool xHasOpt = onnx_mlir::hasConvONNXTensorDataLayout(op.getX().getType());
+    bool wHasOpt = onnx_mlir::hasConvONNXTensorDataLayout(op.getW().getType());
+    bool hasFullOptLayout = xHasOpt && wHasOpt;
     if (DEBUG)
       fprintf(stderr,
           "ConvOps match&rewrite: went for the data simd layout opt.\n");
-    if (hasOptLayout)
-      assert(onnx_mlir::hasConvONNXTensorDataLayout(op.getW().getType()) &&
-             "custom layout for both X and W");
     bool canBeOptimized =
-        canBeAMatmul || (enableSimdDataLayoutOpt && !hasOptLayout);
+      canBeAMatmul || (enableSimdDataLayoutOpt && !hasFullOptLayout &&
+                shouldAttemptSimdLayoutRewrite(op));
     // Conv op is legal if it cannot be further optimized.
     return !canBeOptimized;
   });

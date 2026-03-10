@@ -239,7 +239,7 @@ public:
   virtual ~AVX2x86VectorMachineSupport() = default;
 
   std::string computeArchName() override { return "x86-avx2"; }
-  int64_t computeArchVectorBitWidth() override { return 258; }
+  int64_t computeArchVectorBitWidth() override { return 256; }
 };
 
 // Support for Arm 64

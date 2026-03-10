@@ -43,8 +43,17 @@ bool convertStringToONNXCustomTensorDataLayout(StringAttr layoutAttr,
     yFactor = 0;
     layout = ONNXTensorEncodingAttr::DataLayout::NCHWxC;
     return true;
+  } else if (layoutStr.equals_insensitive(LAYOUT_NCHW8C)) {
+    xFactor = 8;
+    yFactor = 0;
+    layout = ONNXTensorEncodingAttr::DataLayout::NCHWxC;
+    return true;
   } else if (layoutStr.equals_insensitive(LAYOUT_KCMN4C4K)) {
     xFactor = yFactor = 4;
+    layout = ONNXTensorEncodingAttr::DataLayout::KCNMxCyK;
+    return true;
+  } else if (layoutStr.equals_insensitive(LAYOUT_KCMN8C8K)) {
+    xFactor = yFactor = 8;
     layout = ONNXTensorEncodingAttr::DataLayout::KCNMxCyK;
     return true;
   } else if (layoutStr.equals_insensitive(LAYOUT_STANDARD)) {
@@ -63,11 +72,15 @@ StringRef convertONNXTensorDataLayoutToString(
   case ONNXTensorEncodingAttr::DataLayout::NCHWxC:
     if (xFactor == 4 && yFactor == 0)
       return StringRef(LAYOUT_NCHW4C);
+    if (xFactor == 8 && yFactor == 0)
+      return StringRef(LAYOUT_NCHW8C);
     llvm_unreachable("NCHWxC with unsupported x or y factors");
     break;
   case ONNXTensorEncodingAttr::DataLayout::KCNMxCyK:
     if (xFactor == 4 && yFactor == 4)
       return StringRef(LAYOUT_KCMN4C4K);
+    if (xFactor == 8 && yFactor == 8)
+      return StringRef(LAYOUT_KCMN8C8K);
     llvm_unreachable("KCNMxCyK with unsupported x or y factors");
     break;
   case ONNXTensorEncodingAttr::DataLayout::STANDARD:
